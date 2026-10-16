@@ -24,32 +24,83 @@ const ICE_SERVERS = [
   ...parseIce(process.env.ICE_SERVERS),
 ];
 
+// Accepts strict JSON, or the JavaScript snippet Metered shows under "Instructions"
+// (unquoted keys, trailing commas, an "iceServers:" prefix), pasted as-is.
 function parseIce(raw) {
   if (!raw) return [];
-  try {
-    const v = JSON.parse(raw);
-    return Array.isArray(v) ? v : [v];
-  } catch {
-    console.warn('ICE_SERVERS is not valid JSON, ignoring it');
-    return [];
+  let text = raw.trim();
+  const start = text.indexOf('['), end = text.lastIndexOf(']');
+  if (start !== -1 && end > start) text = text.slice(start, end + 1);
+  const attempts = [
+    text,
+    text
+      .replace(/'/g, '"')                              // single quotes -> double
+      .replace(/([{,]\s*)([A-Za-z_]\w*)\s*:/g, '$1"$2":') // quote bare keys
+      .replace(/,\s*([}\]])/g, '$1'),                  // drop trailing commas
+  ];
+  for (const t of attempts) {
+    try {
+      const v = JSON.parse(t);
+      const list = Array.isArray(v) ? v : [v];
+      console.log(`ICE_SERVERS loaded: ${list.length} entries`);
+      return list;
+    } catch {}
   }
+  console.warn('ICE_SERVERS could not be read, ignoring it');
+  return [];
 }
 
-// Optional: TURN_CREDENTIALS_URL = your Metered credentials link
-// (https://<app>.metered.live/api/v1/turn/credentials?apiKey=...). Cached for an hour.
-let turnCache = { at: 0, servers: [] };
-async function getIceServers() {
-  const url = process.env.TURN_CREDENTIALS_URL;
-  if (url && Date.now() - turnCache.at > 60 * 60 * 1000) {
-    try {
-      const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
-      const servers = await r.json();
-      if (Array.isArray(servers)) turnCache = { at: Date.now(), servers };
-    } catch (e) {
-      console.warn('Could not fetch TURN credentials:', e.message);
-    }
+// Optional TURN relays, fetched by the server so secrets never reach the browser:
+//   Cloudflare (1,000 GB/month free): CF_TURN_KEY_ID + CF_TURN_API_TOKEN
+//   Metered: TURN_CREDENTIALS_URL = https://<app>.metered.live/api/v1/turn/credentials?apiKey=...
+const CF_API = process.env.CF_TURN_API_BASE || 'https://rtc.live.cloudflare.com/v1';
+const CF_TTL = 24 * 60 * 60;           // credentials valid for 24 hours
+let cfCache = { at: 0, servers: [] };
+let meteredCache = { at: 0, servers: [] };
+
+async function cloudflareIce() {
+  const { CF_TURN_KEY_ID: id, CF_TURN_API_TOKEN: token } = process.env;
+  if (!id || !token) return [];
+  if (Date.now() - cfCache.at < 12 * 60 * 60 * 1000) return cfCache.servers; // refresh twice a day
+  try {
+    const r = await fetch(`${CF_API}/turn/keys/${id}/credentials/generate-ice-servers`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ttl: CF_TTL }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const { iceServers } = await r.json();
+    // Port 53 URLs can time out in browsers, so leave them out.
+    const servers = (iceServers || []).map((s) => {
+      const urls = (Array.isArray(s.urls) ? s.urls : [s.urls]).filter((u) => !/:53(\?|$)/.test(u));
+      return { ...s, urls };
+    }).filter((s) => s.urls.length);
+    cfCache = { at: Date.now(), servers };
+    console.log(`Cloudflare TURN ready: ${servers.length} entries`);
+  } catch (e) {
+    console.warn('Could not get Cloudflare TURN credentials:', e.message);
   }
-  return [...ICE_SERVERS, ...turnCache.servers];
+  return cfCache.servers;
+}
+
+async function meteredIce() {
+  const url = process.env.TURN_CREDENTIALS_URL;
+  if (!url) return [];
+  if (Date.now() - meteredCache.at < 60 * 60 * 1000) return meteredCache.servers;
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const servers = await r.json();
+    if (Array.isArray(servers)) meteredCache = { at: Date.now(), servers };
+  } catch (e) {
+    console.warn('Could not fetch Metered TURN credentials:', e.message);
+  }
+  return meteredCache.servers;
+}
+
+async function getIceServers() {
+  const [cf, metered] = await Promise.all([cloudflareIce(), meteredIce()]);
+  return [...ICE_SERVERS, ...cf, ...metered];
 }
 
 function newRoomCode() {
