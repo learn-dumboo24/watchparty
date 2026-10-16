@@ -188,6 +188,7 @@
   // ---------- State ----------
   let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
   let localStream = null;
+  let hasCam = false;          // a camera exists, even if it's switched off right now
   let ws = null, retryTimer = null, stopped = false, joined = false;
   let pc = null, isOfferer = false, pendingIce = [], failures = 0;
   let partner = { online: false, call: false, sync: 0 };
@@ -203,6 +204,7 @@
     $('join-btn').disabled = true;
     await configReady;
     localStream = await getMedia();
+    hasCam = !!localStream?.getVideoTracks().length;
     if (localStream) {
       localEl.srcObject = localStream;
       localEl.classList.toggle('hidden', !localStream.getVideoTracks().length);
@@ -214,9 +216,11 @@
     connectWS();
   };
 
+  const VIDEO_CONSTRAINTS = { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } };
+
   async function getMedia() {
     const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
-    const video = { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } };
+    const video = VIDEO_CONSTRAINTS;
     try {
       return await navigator.mediaDevices.getUserMedia({ audio, video });
     } catch {
@@ -363,8 +367,10 @@
     const conn = newPC();
     for (const kind of ['audio', 'video']) {
       const track = localStream?.getTracks().find((t) => t.kind === kind);
+      // Keep a sending slot for the camera even while it's off, so it can come back later.
+      const canSend = !!track || (kind === 'video' && hasCam);
       conn.addTransceiver(track || kind, {
-        direction: track ? 'sendrecv' : 'recvonly',
+        direction: canSend ? 'sendrecv' : 'recvonly',
         streams: localStream ? [localStream] : [],
       });
     }
@@ -384,6 +390,9 @@
         await tr.sender.replaceTrack(track);
         tr.direction = 'sendrecv';
         if (tr.sender.setStreams) tr.sender.setStreams(localStream);
+      } else if (tr && kind === 'video' && hasCam) {
+        tr.direction = 'sendrecv'; // camera is off for now, keep the slot for later
+        if (tr.sender.setStreams && localStream) tr.sender.setStreams(localStream);
       }
     }
     await flushIce();
@@ -444,13 +453,38 @@
     sendMediaState();
   };
 
-  $('cam-btn').onclick = () => {
-    const t = localStream?.getVideoTracks()[0];
-    if (!t) return;
-    t.enabled = !t.enabled;
-    $('cam-btn').textContent = t.enabled ? '📷 Camera on' : '🚫 Camera off';
-    $('cam-btn').classList.toggle('off', !t.enabled);
-    localEl.classList.toggle('hidden', !t.enabled);
+  // Camera off really releases the webcam (the light goes off). Camera on reopens it.
+  function videoSender() {
+    return pc?.getTransceivers().find((t) => t.receiver.track.kind === 'video')?.sender || null;
+  }
+
+  $('cam-btn').onclick = async () => {
+    if (!localStream || !hasCam) return;
+    const btn = $('cam-btn');
+    btn.disabled = true;
+    const current = localStream.getVideoTracks()[0];
+    try {
+      if (current) {
+        localStream.removeTrack(current);
+        current.stop();                                   // releases the camera
+        await videoSender()?.replaceTrack(null);
+        localEl.classList.add('hidden');
+      } else {
+        const s = await navigator.mediaDevices.getUserMedia({ video: VIDEO_CONSTRAINTS });
+        const track = s.getVideoTracks()[0];
+        localStream.addTrack(track);
+        await videoSender()?.replaceTrack(track);
+        localEl.srcObject = new MediaStream([track]);
+        localEl.classList.remove('hidden');
+        localEl.play().catch(() => {});
+      }
+    } catch {
+      note("Couldn't turn the camera back on. Check that no other app is using it.");
+    }
+    const on = !!localStream.getVideoTracks()[0];
+    btn.textContent = on ? '📷 Camera on' : '🚫 Camera off';
+    btn.classList.toggle('off', !on);
+    btn.disabled = false;
     sendMediaState();
   };
 
