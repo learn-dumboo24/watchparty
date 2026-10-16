@@ -8,5 +8,9 @@ services:
     startCommand: node index.js
     healthCheckPath: /health
     envVars:
-      - key: TURN_CREDENTIALS_URL
+      - key: ACCESS_KEY
+        sync: false
+      - key: CF_TURN_KEY_ID
+        sync: false
+      - key: CF_TURN_API_TOKEN
         sync: false

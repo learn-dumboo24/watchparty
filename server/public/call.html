@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
 <title>WatchTogether</title>
 <style id="base-style">
   :root {
@@ -136,12 +137,14 @@
 (() => {
   // ---------- Room, server, identity ----------
   const room = location.pathname.split('/').filter(Boolean).pop();
+  const accessKey = new URLSearchParams(location.search).get('k') || '';
+  const keyParam = accessKey ? '?k=' + encodeURIComponent(accessKey) : '';
   const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
   const user = getUserId();
 
   const $ = (id) => document.getElementById(id);
   $('room-code').textContent = room;
-  $('link').value = location.origin + '/r/' + room;
+  $('link').value = location.origin + '/r/' + room + keyParam;
 
   // Hand room + server + identity to the extension.
   const hub = $('wt-hub');
@@ -194,7 +197,7 @@
   let partner = { online: false, call: false, sync: 0 };
   let partnerMedia = { cam: true, mic: true };
 
-  const configReady = fetch('/config')
+  const configReady = fetch('/config' + keyParam)
     .then((r) => r.json())
     .then((c) => { if (c.iceServers) iceServers = c.iceServers; })
     .catch(() => {});
@@ -307,7 +310,7 @@
       case 'full':
         stopped = true;
         setStatus('This room already has two people', 'warn');
-        note('Ask your partner for a new link, or open ' + location.origin + ' to start a new room.');
+        note('Ask your partner for a new link, or open ' + location.origin + '/' + keyParam + ' to start a new room.');
         break;
       case 'replaced':
         stopped = true;

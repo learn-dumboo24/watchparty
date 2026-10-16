@@ -5,7 +5,7 @@
 
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 
 const PORT = process.env.PORT || 8080;
@@ -108,17 +108,43 @@ function newRoomCode() {
   return [...randomBytes(8)].map((b) => alphabet[b % alphabet.length]).join('');
 }
 
+// ---------- Access key ----------
+// Set ACCESS_KEY in Render. Every link must then carry ?k=<key>; without it the
+// call page and the TURN credentials (/config) behave as if they don't exist.
+const ACCESS_KEY = process.env.ACCESS_KEY || '';
+if (!ACCESS_KEY) console.warn('ACCESS_KEY is not set: anyone with the URL can use this server');
+const sha = (s) => createHash('sha256').update(s).digest();
+function keyOk(url) {
+  if (!ACCESS_KEY) return true;
+  return timingSafeEqual(sha(url.searchParams.get('k') || ''), sha(ACCESS_KEY)); // constant-time compare
+}
+
 // ---------- HTTP: call page + config ----------
 const server = http.createServer((req, res) => {
-  const { pathname } = new URL(req.url, 'http://x');
+  const url = new URL(req.url, 'http://x');
+  const { pathname } = url;
+
+  if (pathname === '/health') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    return res.end('ok');
+  }
+  if (!keyOk(url)) {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    return res.end('Not found');
+  }
 
   if (pathname === '/') {
-    res.writeHead(302, { Location: `/r/${newRoomCode()}` });
+    const k = url.searchParams.get('k');
+    res.writeHead(302, { Location: `/r/${newRoomCode()}` + (k ? `?k=${encodeURIComponent(k)}` : '') });
     return res.end();
   }
   const m = pathname.match(/^\/r\/([a-z0-9]{4,32})\/?$/);
   if (m) {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
+    });
     return res.end(CALL_HTML);
   }
   if (pathname === '/config') {
@@ -127,10 +153,6 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ iceServers }));
     });
     return;
-  }
-  if (pathname === '/health') {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    return res.end('ok');
   }
   res.writeHead(404, { 'Content-Type': 'text/plain' });
   res.end('Not found');

@@ -22,6 +22,16 @@ watchparty/
 
 The free plan sleeps after 15 idle minutes. The first visit after that takes up to a minute to wake it.
 
+### Lock it with an access key
+
+Without a key, anyone who finds the URL can create rooms and use your Cloudflare relay.
+
+1. Make a random key: `node -e "console.log(require('crypto').randomBytes(16).toString('hex'))"`
+2. In Render: your service → **Environment** → add `ACCESS_KEY` with that value.
+3. Your link is now `https://<your-app>.onrender.com/?k=<key>`. Bookmark it. Without the key, every page says "Not found".
+
+If a link leaks, change `ACCESS_KEY` and every old link stops working. The key is only ever in Render and in your links.
+
 ## 2. Load the extension (both of you, once)
 
 1. Open `chrome://extensions` and turn on **Developer mode** (top right).
@@ -57,9 +67,11 @@ Click the badge while synced to stop syncing that tab.
 
 Movie sync goes through the server and always works. The camera call goes directly between your laptops, and some networks (Jio, many college and office Wi-Fi networks) block that. The fix is a TURN relay:
 
-1. Sign up free at metered.ca (20 GB of relay a month) and create a TURN app.
-2. Copy its credentials URL: `https://<yourapp>.metered.live/api/v1/turn/credentials?apiKey=<key>`
-3. In Render: your service → **Environment** → set `TURN_CREDENTIALS_URL` to that URL. Render redeploys on its own.
+1. In the Cloudflare dashboard (free account), open **Realtime → TURN Server** and create a TURN key. Copy its **Turn Token ID** and **API Token**. The first 1,000 GB a month are free.
+2. In Render: your service → **Environment** → add `CF_TURN_KEY_ID` and `CF_TURN_API_TOKEN`. Render redeploys on its own.
+3. The Logs tab should show `Cloudflare TURN ready`. Both people reload the call page.
+
+Metered also works: set `TURN_CREDENTIALS_URL`, or paste their `iceServers` snippet into `ICE_SERVERS`. Its free plan is small, though.
 
 ## Run locally (for testing)
 
