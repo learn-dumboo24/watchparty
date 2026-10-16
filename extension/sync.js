@@ -256,7 +256,7 @@
     }
     badge.addEventListener('click', onBadgeClick);
     badge.addEventListener('mouseenter', () => { clearTimeout(dimTimer); badge.style.opacity = '1'; });
-    badge.addEventListener('mouseleave', scheduleDim);
+    badge.addEventListener('mouseleave', () => { if (computeStatus() === 'synced') scheduleDim(); });
     document.addEventListener('fullscreenchange', mountBadge);
     mountBadge();
     updateStatus();
@@ -295,7 +295,10 @@
     if (!badge || flashTimer) return;
     const s = computeStatus();
     badge.textContent = LABELS[s];
-    if (s === 'synced' || s === 'idle') scheduleDim();
+    // Bright red until you click it, dark once you're in a room.
+    badge.style.background = s === 'idle' ? '#e5484d' : 'rgba(18,19,24,.9)';
+    // Only fade once everything works, so it never hides when you need it.
+    if (s === 'synced') scheduleDim();
     else { clearTimeout(dimTimer); badge.style.opacity = '1'; }
   }
 
