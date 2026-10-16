@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WatchTogether</title>
+<style id="base-style">
+  :root {
+    --bg: #0d0e12; --panel: #16181f; --line: #262a34; --text: #eceef2;
+    --muted: #8f96a3; --accent: #f2545b; --ok: #3ccf7a; --warn: #f2b84b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 20px;
+    border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .logo { font-weight: 700; letter-spacing: .2px; }
+  .logo span { color: var(--accent); }
+  .room { color: var(--muted); font-size: 13px; }
+  .pill { margin-left: auto; padding: 5px 12px; border-radius: 999px; font-size: 13px;
+    background: var(--panel); border: 1px solid var(--line); }
+  .pill.ok { color: var(--ok); border-color: #24563a; }
+  .pill.warn { color: var(--warn); border-color: #5a4720; }
+
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px;
+    padding: 20px; max-width: 1200px; margin: 0 auto; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; padding: 16px; } }
+
+  /* Stage = the videos. Also moved into the floating window. */
+  .stage { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #000;
+    border-radius: 14px; overflow: hidden; }
+  .stage video { display: block; }
+  #remote { width: 100%; height: 100%; object-fit: cover; background: #000; }
+  #local { position: absolute; right: 10px; bottom: 10px; width: 28%; max-width: 200px;
+    aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; transform: scaleX(-1);
+    border: 2px solid rgba(255,255,255,.25); background: #111; }
+  #local.hidden { display: none; }
+  .overlay { position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; text-align: center; padding: 20px; color: var(--muted);
+    pointer-events: none; }
+  .overlay.hidden { display: none; }
+  .stage-in-pip { aspect-ratio: auto; height: 100vh; border-radius: 0; }
+
+  .join-box { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 10px;
+    align-items: center; justify-content: center; background: rgba(13,14,18,.92); z-index: 2; }
+  .join-box.hidden { display: none; }
+  .join-box p { margin: 0; color: var(--muted); font-size: 13px; }
+  .primary { background: var(--accent); border: 0; border-radius: 10px; padding: 12px 26px;
+    font-weight: 600; color: #fff; }
+
+  .controls { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+  .ctl { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 9px 14px; }
+  .ctl.off { background: #3a1d20; border-color: #6a2a30; }
+  .ctl:disabled { opacity: .45; cursor: default; }
+  .vol { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px;
+    margin-left: auto; }
+
+  aside { display: flex; flex-direction: column; gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px; }
+  .card h2 { margin: 0 0 10px; font-size: 14px; color: var(--muted); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .6px; }
+  .link-row { display: flex; gap: 8px; }
+  .link-row input { flex: 1; min-width: 0; background: var(--bg); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+  ol { margin: 0; padding-left: 20px; }
+  li { margin: 0 0 10px; }
+  li:last-child { margin-bottom: 0; }
+  .check { display: block; font-size: 13px; color: var(--muted); }
+  .check.yes { color: var(--ok); }
+  .note { font-size: 13px; color: var(--warn); margin-top: 8px; }
+  .note:empty { display: none; }
+</style>
+</head>
+<body>
+<!-- The WatchTogether extension reads this to learn your room. Don't remove. -->
+<div id="wt-hub" hidden></div>
+
+<header>
+  <div class="logo">Watch<span>Together</span></div>
+  <div class="room">Room <b id="room-code"></b></div>
+  <div class="pill" id="status">Not joined yet</div>
+</header>
+
+<main>
+  <section>
+    <div id="stage-slot">
+      <div class="stage" id="stage">
+        <video id="remote" autoplay playsinline></video>
+        <div class="overlay" id="remote-overlay">Waiting for your partner…</div>
+        <video id="local" class="hidden" autoplay playsinline muted></video>
+        <div class="join-box" id="join-box">
+          <button class="primary" id="join-btn">Join call</button>
+          <p>Your camera and mic turn on when you join.</p>
+        </div>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="ctl" id="mic-btn" disabled>🎙 Mic on</button>
+      <button class="ctl" id="cam-btn" disabled>📷 Camera on</button>
+      <button class="ctl" id="pip-btn" disabled>⧉ Float over movie</button>
+      <label class="vol">Partner volume <input type="range" id="vol" min="0" max="1" step="0.05" value="1"></label>
+    </div>
+    <div class="note" id="note"></div>
+  </section>
+
+  <aside>
+    <div class="card">
+      <h2>Invite</h2>
+      <div class="link-row">
+        <input id="link" readonly>
+        <button class="ctl" id="copy-btn">Copy</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Setup</h2>
+      <ol>
+        <li>Send the invite link to your partner.
+          <span class="check" id="chk-partner">Partner: not here yet</span></li>
+        <li>Both of you load the WatchTogether extension once.
+          <span class="check" id="chk-ext">Extension: not detected on this page</span></li>
+        <li>Open the movie in another tab (Netflix, Prime, YouTube…) and click the
+          <b>👥 Sync this tab</b> button on the right edge.
+          <span class="check" id="chk-you-sync">Your movie tab: not synced</span>
+          <span class="check" id="chk-partner-sync">Partner's movie tab: not synced</span></li>
+        <li>Use earphones so the movie sound doesn't echo through your mic.</li>
+      </ol>
+    </div>
+  </aside>
+</main>
+
+<script>
+(() => {
+  // ---------- Room, server, identity ----------
+  const room = location.pathname.split('/').filter(Boolean).pop();
+  const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+  const user = getUserId();
+
+  const $ = (id) => document.getElementById(id);
+  $('room-code').textContent = room;
+  $('link').value = location.origin + '/r/' + room;
+
+  // Hand room + server + identity to the extension.
+  const hub = $('wt-hub');
+  hub.dataset.room = room;
+  hub.dataset.server = wsUrl;
+  hub.dataset.user = user;
+  const showExt = () => {
+    if (hub.dataset.extension === 'ready') check('chk-ext', true, 'Extension: detected ✓');
+  };
+  new MutationObserver(showExt).observe(hub, { attributes: true });
+  showExt();
+
+  function getUserId() {
+    let id = null;
+    try { id = localStorage.getItem('wt-user'); } catch {}
+    if (!id) {
+      id = (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36));
+      try { localStorage.setItem('wt-user', id); } catch {}
+    }
+    return id;
+  }
+
+  // ---------- UI helpers ----------
+  const remoteEl = $('remote');
+  const localEl = $('local');
+  const overlay = $('remote-overlay');
+
+  function setStatus(text, kind = '') {
+    const el = $('status');
+    el.textContent = text;
+    el.className = 'pill ' + kind;
+  }
+  function note(text) { $('note').textContent = text || ''; }
+  function check(id, yes, text) {
+    const el = $(id);
+    el.textContent = text;
+    el.classList.toggle('yes', yes);
+  }
+  function showOverlay(text) {
+    overlay.textContent = text;
+    overlay.classList.toggle('hidden', !text);
+  }
+
+  // ---------- State ----------
+  let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+  let localStream = null;
+  let ws = null, retryTimer = null, stopped = false, joined = false;
+  let pc = null, isOfferer = false, pendingIce = [], failures = 0;
+  let partner = { online: false, call: false, sync: 0 };
+  let partnerMedia = { cam: true, mic: true };
+
+  const configReady = fetch('/config')
+    .then((r) => r.json())
+    .then((c) => { if (c.iceServers) iceServers = c.iceServers; })
+    .catch(() => {});
+
+  // ---------- Join ----------
+  $('join-btn').onclick = async () => {
+    $('join-btn').disabled = true;
+    await configReady;
+    localStream = await getMedia();
+    if (localStream) {
+      localEl.srcObject = localStream;
+      localEl.classList.toggle('hidden', !localStream.getVideoTracks().length);
+    }
+    $('join-box').classList.add('hidden');
+    $('mic-btn').disabled = !localStream?.getAudioTracks().length;
+    $('cam-btn').disabled = !localStream?.getVideoTracks().length;
+    $('pip-btn').disabled = false;
+    connectWS();
+  };
+
+  async function getMedia() {
+    const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+    const video = { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } };
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio, video });
+    } catch {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({ audio });
+        note('Camera unavailable, joined with mic only.');
+        return s;
+      } catch {
+        note('Camera and mic are blocked. You can still see and hear your partner. To fix: allow access from the icon in the address bar, then reload.');
+        return null;
+      }
+    }
+  }
+
+  // ---------- Server connection ----------
+  function send(msg) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  }
+
+  function connectWS() {
+    clearTimeout(retryTimer);
+    const sock = new WebSocket(wsUrl);
+    ws = sock;
+    const slow = setTimeout(() => { if (!joined) setStatus('Waking up server, can take up to a minute…', 'warn'); }, 4000);
+    setStatus(joined ? 'Reconnecting…' : 'Connecting…', 'warn');
+
+    sock.onopen = () => send({ type: 'join', room, user, role: 'call' });
+    sock.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+      onSignal(msg).catch((err) => console.error('[WatchTogether]', err));
+    };
+    sock.onclose = () => {
+      clearTimeout(slow);
+      if (ws !== sock) return;
+      ws = null;
+      joined = false;
+      if (stopped) return;
+      setStatus('Reconnecting to server…', 'warn');
+      retryTimer = setTimeout(connectWS, 2000);
+    };
+  }
+
+  // Keeps a free Render server awake during long quiet stretches.
+  setInterval(() => send({ type: 'ping' }), 4 * 60 * 1000);
+
+  async function onSignal(msg) {
+    switch (msg.type) {
+      case 'joined':
+        joined = true;
+        updateStatus();
+        break;
+      case 'presence':
+        partner = msg.partner;
+        check('chk-partner', partner.call, partner.call ? 'Partner: in the call ✓' : partner.online ? 'Partner: online, not in the call' : 'Partner: not here yet');
+        check('chk-you-sync', msg.you.sync > 0, msg.you.sync > 0 ? 'Your movie tab: synced ✓' : 'Your movie tab: not synced');
+        check('chk-partner-sync', partner.sync > 0, partner.sync > 0 ? "Partner's movie tab: synced ✓" : "Partner's movie tab: not synced");
+        updateStatus();
+        break;
+      case 'peer-joined':      // partner's call page arrived: I start the connection
+        failures = 0;
+        await makeOffer();
+        break;
+      case 'peer-left':
+        if (!pc || pc.connectionState !== 'connected') closePC();
+        updateStatus();
+        break;
+      case 'offer':
+        await handleOffer(msg.data);
+        break;
+      case 'answer':
+        if (pc && pc.signalingState === 'have-local-offer') {
+          await pc.setRemoteDescription(msg.data);
+          await flushIce();
+        }
+        break;
+      case 'ice':
+        await handleIce(msg.data);
+        break;
+      case 'media':
+        partnerMedia = { cam: !!msg.cam, mic: !!msg.mic };
+        updateRemoteOverlay();
+        break;
+      case 'full':
+        stopped = true;
+        setStatus('This room already has two people', 'warn');
+        note('Ask your partner for a new link, or open ' + location.origin + ' to start a new room.');
+        break;
+      case 'replaced':
+        stopped = true;
+        closePC();
+        setStatus('Call moved to another tab', 'warn');
+        break;
+    }
+  }
+
+  // ---------- WebRTC ----------
+  function closePC() {
+    if (pc) { pc.onconnectionstatechange = null; pc.close(); }
+    pc = null;
+    remoteEl.srcObject = null;
+    updateRemoteOverlay();
+  }
+
+  function newPC() {
+    closePC();
+    pendingIce = [];
+    const conn = new RTCPeerConnection({ iceServers });
+    const stream = new MediaStream();
+    remoteEl.srcObject = stream;
+
+    conn.ontrack = (e) => {
+      stream.addTrack(e.track);
+      remoteEl.play().catch(() => {});
+      updateRemoteOverlay();
+    };
+    conn.onicecandidate = (e) => {
+      if (e.candidate) send({ type: 'ice', data: e.candidate.toJSON() });
+    };
+    conn.onconnectionstatechange = () => {
+      if (conn !== pc) return;
+      const s = conn.connectionState;
+      if (s === 'connected') {
+        failures = 0;
+        note('');
+        sendMediaState();
+      } else if (s === 'failed') {
+        failures++;
+        if (failures >= 3) {
+          note("Couldn't connect your cameras. One of your networks is blocking direct connections; the fix is adding a TURN server (see README). Movie sync still works.");
+        } else if (isOfferer && partner.call) {
+          setTimeout(() => makeOffer(), 1000);
+        }
+        if (!partner.call) closePC();
+      }
+      updateStatus();
+    };
+    pc = conn;
+    return conn;
+  }
+
+  async function makeOffer() {
+    isOfferer = true;
+    const conn = newPC();
+    for (const kind of ['audio', 'video']) {
+      const track = localStream?.getTracks().find((t) => t.kind === kind);
+      conn.addTransceiver(track || kind, {
+        direction: track ? 'sendrecv' : 'recvonly',
+        streams: localStream ? [localStream] : [],
+      });
+    }
+    const offer = await conn.createOffer();
+    await conn.setLocalDescription(offer);
+    send({ type: 'offer', data: conn.localDescription.toJSON() });
+  }
+
+  async function handleOffer(desc) {
+    isOfferer = false;
+    const conn = newPC();
+    await conn.setRemoteDescription(desc);
+    for (const kind of ['audio', 'video']) {
+      const track = localStream?.getTracks().find((t) => t.kind === kind);
+      const tr = conn.getTransceivers().find((t) => t.receiver.track.kind === kind && !t.sender.track);
+      if (tr && track) {
+        await tr.sender.replaceTrack(track);
+        tr.direction = 'sendrecv';
+        if (tr.sender.setStreams) tr.sender.setStreams(localStream);
+      }
+    }
+    await flushIce();
+    const answer = await conn.createAnswer();
+    await conn.setLocalDescription(answer);
+    send({ type: 'answer', data: conn.localDescription.toJSON() });
+  }
+
+  async function handleIce(candidate) {
+    if (!pc) return;
+    if (!pc.remoteDescription) { pendingIce.push(candidate); return; }
+    try { await pc.addIceCandidate(candidate); } catch (e) { console.warn('[WatchTogether] ICE', e); }
+  }
+
+  async function flushIce() {
+    const queued = pendingIce;
+    pendingIce = [];
+    for (const c of queued) {
+      try { await pc.addIceCandidate(c); } catch (e) { console.warn('[WatchTogether] ICE', e); }
+    }
+  }
+
+  // ---------- Status ----------
+  function updateStatus() {
+    if (stopped) return;
+    if (!joined) return;
+    const s = pc?.connectionState;
+    if (!partner.call) setStatus('Waiting for your partner…');
+    else if (s === 'connected') setStatus('Connected', 'ok');
+    else if (s === 'disconnected') setStatus('Connection unstable…', 'warn');
+    else if (s === 'failed') setStatus('Camera connection failed', 'warn');
+    else setStatus('Connecting to partner…', 'warn');
+    updateRemoteOverlay();
+  }
+
+  function updateRemoteOverlay() {
+    if (!partner.call) return showOverlay('Waiting for your partner…');
+    if (!pc || pc.connectionState !== 'connected') return showOverlay('Connecting…');
+    const stream = remoteEl.srcObject;
+    const hasVideo = stream && stream.getVideoTracks().length > 0;
+    if (!hasVideo || !partnerMedia.cam) return showOverlay(partnerMedia.mic ? "Partner's camera is off" : "Partner's camera and mic are off");
+    showOverlay('');
+  }
+
+  function sendMediaState() {
+    const a = localStream?.getAudioTracks()[0];
+    const v = localStream?.getVideoTracks()[0];
+    send({ type: 'media', mic: !!(a && a.enabled), cam: !!(v && v.enabled) });
+  }
+
+  // ---------- Controls ----------
+  $('mic-btn').onclick = () => {
+    const t = localStream?.getAudioTracks()[0];
+    if (!t) return;
+    t.enabled = !t.enabled;
+    $('mic-btn').textContent = t.enabled ? '🎙 Mic on' : '🔇 Mic off';
+    $('mic-btn').classList.toggle('off', !t.enabled);
+    sendMediaState();
+  };
+
+  $('cam-btn').onclick = () => {
+    const t = localStream?.getVideoTracks()[0];
+    if (!t) return;
+    t.enabled = !t.enabled;
+    $('cam-btn').textContent = t.enabled ? '📷 Camera on' : '🚫 Camera off';
+    $('cam-btn').classList.toggle('off', !t.enabled);
+    localEl.classList.toggle('hidden', !t.enabled);
+    sendMediaState();
+  };
+
+  $('vol').oninput = (e) => { remoteEl.volume = Number(e.target.value); };
+
+  $('copy-btn').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText($('link').value);
+      $('copy-btn').textContent = 'Copied';
+    } catch {
+      $('link').select();
+      $('copy-btn').textContent = 'Press Ctrl+C';
+    }
+    setTimeout(() => ($('copy-btn').textContent = 'Copy'), 2000);
+  };
+
+  // Float the videos in an always-on-top window, so they stay visible over a fullscreen movie.
+  $('pip-btn').onclick = async () => {
+    const stage = $('stage');
+    if ('documentPictureInPicture' in window) {
+      if (documentPictureInPicture.window) { documentPictureInPicture.window.close(); return; }
+      const pip = await documentPictureInPicture.requestWindow({ width: 320, height: 260 });
+      const style = pip.document.createElement('style');
+      style.textContent = $('base-style').textContent + ' body{margin:0;overflow:hidden}';
+      pip.document.head.append(style);
+      stage.classList.add('stage-in-pip');
+      pip.document.body.append(stage);
+      remoteEl.play().catch(() => {});
+      localEl.play().catch(() => {});
+      $('pip-btn').textContent = '⧉ Bring back';
+      pip.addEventListener('pagehide', () => {
+        stage.classList.remove('stage-in-pip');
+        $('stage-slot').append(stage);
+        remoteEl.play().catch(() => {});
+        localEl.play().catch(() => {});
+        $('pip-btn').textContent = '⧉ Float over movie';
+      });
+    } else if (remoteEl.srcObject && document.pictureInPictureEnabled) {
+      remoteEl.requestPictureInPicture().catch(() => {});
+    }
+  };
+
+  updateRemoteOverlay();
+})();
+</script>
+</body>
+</html>

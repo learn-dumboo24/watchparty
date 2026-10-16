@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: watchparty
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node index.js
+    healthCheckPath: /health
+    envVars:
+      - key: TURN_CREDENTIALS_URL
+        sync: false

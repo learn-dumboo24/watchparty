@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "WatchTogether",
+  "version": "1.0",
+  "description": "Synced play, pause and seek on any video site, for two people.",
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["sync.js"],
+      "all_frames": true
+    },
+    {
+      "matches": ["https://www.netflix.com/*"],
+      "js": ["netflix.js"],
+      "world": "MAIN"
+    }
+  ]
+}
